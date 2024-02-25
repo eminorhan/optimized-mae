@@ -47,8 +47,8 @@ def get_args_parser():
 
     # Optimizer parameters
     parser.add_argument('--weight_decay', type=float, default=0.05, help='weight decay (default: 0.05)')
-    parser.add_argument('--lr', type=float, default=None, help='learning rate (absolute lr)')
-    parser.add_argument('--min_lr', type=float, default=0., help='lower lr bound for cyclic schedulers that hit 0')
+    parser.add_argument('--lr', type=float, default=0.0001, help='learning rate (absolute lr)')
+    parser.add_argument('--min_lr', type=float, default=0.0001, help='lower lr bound for cyclic schedulers that hit 0')
 
     # Dataset parameters
     parser.add_argument('--data_path', default='', type=str, help='dataset path')
@@ -87,7 +87,7 @@ def main(args):
     print('Number of iters per epoch:', len(data_loader))
 
     # define the model
-    model = models_mae.__dict__[args.model](img_size=args.input_size, norm_pix_loss=args.norm_pix_loss)
+    model = models_mae.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
     model.to(device)
 
     # optionally compile model
@@ -103,7 +103,7 @@ def main(args):
 
     # set wd as 0 for bias and norm layers
     param_groups = misc.add_weight_decay(model_without_ddp, args.weight_decay, bias_wd=False)
-    optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95), foreach=True, fused=True)  # setting foreach and fused True for faster updates (hopefully)
+    optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95), fused=True)  # setting fused True for faster updates (hopefully)
     loss_scaler = NativeScaler()
 
     misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
