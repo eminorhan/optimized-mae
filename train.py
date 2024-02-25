@@ -116,8 +116,9 @@ def main(args):
     for epoch in range(args.start_epoch, args.epochs):
 
         data_loader.sampler.set_epoch(epoch)
+        header = 'Epoch: [{}]'.format(epoch)
 
-        for it, (samples, _) in enumerate(data_loader):
+        for it, (samples, _) in enumerate(metric_logger.log_every(data_loader, len(data_loader) // 1, header)):
 
             samples = samples.to(device, non_blocking=True)
 
@@ -152,7 +153,6 @@ def main(args):
 
         # gather the stats from all processes
         metric_logger.synchronize_between_processes()
-        print("Averaged stats:", metric_logger)
         train_stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()}, 'epoch': epoch}
 
