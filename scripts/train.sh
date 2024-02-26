@@ -29,6 +29,7 @@ srun python -u ../train.py \
 	--num_workers 16 \
 	--output_dir /scratch/eo41/optimized-mae/outputs/models_sa1b_${NUM_IGS} \
 	--data_path /vast/eo41/sa-1b/images_${NUM_IGS}/${SLURM_ARRAY_TASK_ID} \
-	--save_prefix vith14_448_${NUM_IGS}_${SLURM_ARRAY_TASK_ID}
+	--save_prefix vith14_448_${NUM_IGS}_${SLURM_ARRAY_TASK_ID} \
+	--compile
 
 echo "Done"
