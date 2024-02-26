@@ -17,11 +17,11 @@ export WORLD_SIZE=1
 NUM_IGS=10000
 
 srun python -u ../train.py \
-	--model 'mae_vit_huge_patch14_448' \
+	--model 'mae_vit_huge_patch14_1792' \
 	--resume '' \
 	--accum_iter 1 \
-	--batch_size_per_gpu 128 \
-	--input_size 448 \
+	--batch_size_per_gpu 8 \
+	--input_size 1792 \
 	--mask_ratio 0.8 \
 	--lr 0.0001 \
 	--min_lr 0.0001 \
@@ -29,7 +29,7 @@ srun python -u ../train.py \
 	--num_workers 16 \
 	--output_dir /scratch/eo41/optimized-mae/outputs/models_sa1b_${NUM_IGS} \
 	--data_path /vast/eo41/sa-1b/images_${NUM_IGS}/${SLURM_ARRAY_TASK_ID} \
-	--save_prefix vith14_448_${NUM_IGS}_${SLURM_ARRAY_TASK_ID} \
+	--save_prefix vith14_1792_${NUM_IGS}_${SLURM_ARRAY_TASK_ID} \
 	--compile
 
 echo "Done"
