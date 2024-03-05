@@ -1,6 +1,6 @@
 ## Optimized Masked Autoencoders (MAEs)
 
-An optimized, lean implementation of masked autoencoders (MAEs). The skeleton of the code is recycled from Facebook's [MAE](https://github.com/facebookresearch/mae) repository with various simplifications. The following optimizations are implemented:
+A lean, optimized implementation of masked autoencoders (MAEs). The skeleton of the code is recycled from Facebook's [MAE](https://github.com/facebookresearch/mae) repository with various simplifications. The following optimizations are implemented:
 
 - [x] FlashAttention-2
 - [x] `torch.compile`
