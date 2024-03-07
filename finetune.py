@@ -56,10 +56,14 @@ def get_args_parser():
     parser.add_argument('--eval', action='store_true', help='Perform evaluation only')
     parser.add_argument('--num_workers', default=8, type=int)
     parser.add_argument("--save_prefix", default="", type=str, help="""prefix for saving checkpoint and log files""")
+    
+    # distributed training parameters
+    parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
 
     return parser
 
 def main(args):
+    misc.init_distributed_mode(args)
     print('job dir: {}'.format(os.path.dirname(os.path.realpath(__file__))))
     print("{}".format(args).replace(', ', ',\n'))
     device = torch.device(args.device)
@@ -83,7 +87,7 @@ def main(args):
 
     # train and val datasets and loaders
     val_dataset = ImageFolder(args.val_data_path, transform=val_transform)
-    val_loader = DataLoader(val_dataset, batch_size=16*args.batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=True)  # note we use a larger batch size for val
+    val_loader = DataLoader(val_dataset, batch_size=16*args.batch_size_per_gpu, shuffle=False, num_workers=args.num_workers, pin_memory=True)  # note we use a larger batch size for val
 
     train_dataset = ImageFolder(args.train_data_path, transform=train_transform)
     train_sampler = DistributedSampler(train_dataset, num_replicas=misc.get_world_size(), rank=misc.get_rank(), shuffle=True)
