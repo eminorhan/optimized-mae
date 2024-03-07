@@ -26,6 +26,7 @@ import util.misc as misc
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
 from torchvision.datasets import ImageFolder
 from torch.utils.data import DataLoader, DistributedSampler
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 
 def get_args_parser():
@@ -37,6 +38,7 @@ def get_args_parser():
     # Model parameters
     parser.add_argument('--model', default='', type=str, help='Name of model')
     parser.add_argument('--resume', default='', help='resume from checkpoint')
+    parser.add_argument('--compile', action='store_true', help='whether to compile the model for improved efficiency (default: false)')
 
     # Optimizer parameters
     parser.add_argument('--lr', type=float, default=0.0005, metavar='LR', help='learning rate (absolute lr)')
@@ -92,19 +94,24 @@ def main(args):
 
     # set up and load model
     model = models_vit.__dict__[args.model](num_classes=args.num_labels)
-
-    model_without_ddp = model
     model.to(device)
+    model_without_ddp = model
+
+    # optionally compile model
+    if args.compile:
+        model = torch.compile(model)
+
+    model = DDP(model, device_ids=[args.gpu], find_unused_parameters=True)  # TODO: try FSDP
 
     print(f"Model: {model_without_ddp}")
     print(f"Number of params (M): {(sum(p.numel() for p in model_without_ddp.parameters() if p.requires_grad) / 1.e6)}")
 
     # set optimizer + loss
     loss_scaler = NativeScaler()
-    optimizer = torch.optim.AdamW(model.parameters(), args.lr, weight_decay=0.05)
+    optimizer = torch.optim.AdamW(model_without_ddp.parameters(), args.lr, weight_decay=0.05, fused=True)
     criterion = torch.nn.CrossEntropyLoss()
 
-    misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler, optim_resume=True)
+    misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler, optim_resume=False)
 
     if args.eval:
         test_stats = evaluate(val_loader, model, device)
