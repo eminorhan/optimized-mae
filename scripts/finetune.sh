@@ -22,7 +22,7 @@ srun python -u ../finetune.py \
 	--save_prefix vith14_1792_${NUM_IGS}_${SLURM_ARRAY_TASK_ID}_finetuned \
 	--input_size 1792 \
 	--batch_size_per_gpu 1 \
-	--accum_iter 128 \
+	--accum_iter 1 \
 	--epochs 50 \
 	--num_workers 16 \
 	--lr 0.0001 \

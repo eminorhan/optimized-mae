@@ -89,14 +89,15 @@ def main(args):
     # define the model
     model = models_mae.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
     model.to(device)
+    model_without_ddp = model
+    print(f"Model: {model_without_ddp}")
 
     # optionally compile model
     if args.compile:
         model = torch.compile(model)
+    print(f"Model: {model_without_ddp}")
 
     model = DDP(model, device_ids=[args.gpu], find_unused_parameters=True)  # TODO: try FSDP
-    model_without_ddp = model.module
-    
     print(f"Model: {model_without_ddp}")
     print(f"Number of params (M): {(sum(p.numel() for p in model_without_ddp.parameters() if p.requires_grad) / 1.e6)}")
 
@@ -141,7 +142,7 @@ def main(args):
 
         # ============ writing logs + saving checkpoint ============
         save_dict = {
-            'model': model.module.state_dict(),
+            'model': model_without_ddp.state_dict(),
             'optimizer': optimizer.state_dict(),
             'args': args,
             'epoch': epoch,

@@ -56,7 +56,7 @@ def get_args_parser():
     parser.add_argument('--eval', action='store_true', help='Perform evaluation only')
     parser.add_argument('--num_workers', default=8, type=int)
     parser.add_argument("--save_prefix", default="", type=str, help="""prefix for saving checkpoint and log files""")
-    
+
     # distributed training parameters
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
 
@@ -66,6 +66,7 @@ def main(args):
     misc.init_distributed_mode(args)
     print('job dir: {}'.format(os.path.dirname(os.path.realpath(__file__))))
     print("{}".format(args).replace(', ', ',\n'))
+
     device = torch.device(args.device)
     cudnn.benchmark = True
 
@@ -91,7 +92,7 @@ def main(args):
 
     train_dataset = ImageFolder(args.train_data_path, transform=train_transform)
     train_sampler = DistributedSampler(train_dataset, num_replicas=misc.get_world_size(), rank=misc.get_rank(), shuffle=True)
-    train_loader = torch.utils.data.DataLoader(train_dataset, sampler=train_sampler, batch_size=args.batch_size_per_gpu, num_workers=args.num_workers, pin_memory=True, drop_last=True)
+    train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.batch_size_per_gpu, num_workers=args.num_workers, pin_memory=True, drop_last=True)
 
     print(f"Data loaded with {len(train_dataset)} train and {len(val_dataset)} val imgs.")
     print(f"{len(train_loader)} train and {len(val_loader)} val iterations per epoch.")
@@ -100,20 +101,23 @@ def main(args):
     model = models_vit.__dict__[args.model](num_classes=args.num_labels)
     model.to(device)
     model_without_ddp = model
+    print(f"Model: {model_without_ddp}")
 
     # optionally compile model
     if args.compile:
         model = torch.compile(model)
+    print(f"Model: {model_without_ddp}")
 
     model = DDP(model, device_ids=[args.gpu], find_unused_parameters=True)  # TODO: try FSDP
-
     print(f"Model: {model_without_ddp}")
     print(f"Number of params (M): {(sum(p.numel() for p in model_without_ddp.parameters() if p.requires_grad) / 1.e6)}")
 
     # set optimizer + loss
-    loss_scaler = NativeScaler()
-    optimizer = torch.optim.AdamW(model_without_ddp.parameters(), args.lr, weight_decay=0.05, fused=True)
+    param_groups = misc.add_weight_decay(model_without_ddp, 0.05, bias_wd=False)
+    optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95), fused=True)  # setting fused True for faster updates (hopefully)
+    # optimizer = torch.optim.AdamW(model_without_ddp.parameters(), args.lr, weight_decay=0.05, fused=True)
     criterion = torch.nn.CrossEntropyLoss()
+    loss_scaler = NativeScaler()
 
     misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler, optim_resume=False)
 
@@ -133,7 +137,7 @@ def main(args):
     for epoch in range(args.start_epoch, args.epochs):
 
         for it, (samples, targets) in enumerate(train_loader):
-
+            print('iter:', it)
             samples = samples.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True)
 
