@@ -21,7 +21,7 @@ srun python -u ../finetune.py \
 	--resume /scratch/eo41/optimized-mae/outputs/models_sa1b_${NUM_IGS}/vith14_1792_${NUM_IGS}_${SLURM_ARRAY_TASK_ID}_checkpoint.pth \
 	--save_prefix vith14_1792_${NUM_IGS}_${SLURM_ARRAY_TASK_ID}_finetuned \
 	--input_size 1792 \
-	--batch_size_per_gpu 3 \
+	--batch_size_per_gpu 2 \
 	--accum_iter 4 \
 	--epochs 50 \
 	--num_workers 16 \
