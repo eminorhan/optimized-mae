@@ -97,7 +97,7 @@ def main(args):
         model = torch.compile(model)
     print(f"Model: {model_without_ddp}")
 
-    model = DDP(model, device_ids=[args.gpu], find_unused_parameters=True)  # TODO: try FSDP
+    model = DDP(model, device_ids=[args.gpu])  # TODO: try FSDP
     print(f"Model: {model_without_ddp}")
     print(f"Number of params (M): {(sum(p.numel() for p in model_without_ddp.parameters() if p.requires_grad) / 1.e6)}")
 

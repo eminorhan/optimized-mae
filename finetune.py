@@ -25,7 +25,7 @@ import models_vit
 import util.misc as misc
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
 from torchvision.datasets import ImageFolder
-from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.data import DataLoader, DistributedSampler, SequentialSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 
@@ -88,7 +88,8 @@ def main(args):
 
     # train and val datasets and loaders
     val_dataset = ImageFolder(args.val_data_path, transform=val_transform)
-    val_loader = DataLoader(val_dataset, batch_size=16*args.batch_size_per_gpu, shuffle=False, num_workers=args.num_workers, pin_memory=True)  # note we use a larger batch size for val
+    val_sampler = SequentialSampler(val_dataset)
+    val_loader = DataLoader(val_dataset, sampler=val_sampler, batch_size=16*args.batch_size_per_gpu, num_workers=args.num_workers, pin_memory=True, drop_last=False)  # note we use a larger batch size for val
 
     train_dataset = ImageFolder(args.train_data_path, transform=train_transform)
     train_sampler = DistributedSampler(train_dataset, num_replicas=misc.get_world_size(), rank=misc.get_rank(), shuffle=True)
@@ -101,21 +102,18 @@ def main(args):
     model = models_vit.__dict__[args.model](num_classes=args.num_labels)
     model.to(device)
     model_without_ddp = model
-    print(f"Model: {model_without_ddp}")
 
     # optionally compile model
     if args.compile:
         model = torch.compile(model)
-    print(f"Model: {model_without_ddp}")
 
-    model = DDP(model, device_ids=[args.gpu], find_unused_parameters=True)  # TODO: try FSDP
+    # wrap model in ddp
+    model = DDP(model, device_ids=[args.gpu])  # TODO: try FSDP
     print(f"Model: {model_without_ddp}")
     print(f"Number of params (M): {(sum(p.numel() for p in model_without_ddp.parameters() if p.requires_grad) / 1.e6)}")
 
     # set optimizer + loss
-    param_groups = misc.add_weight_decay(model_without_ddp, 0.05, bias_wd=False)
-    optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95), fused=True)  # setting fused True for faster updates (hopefully)
-    # optimizer = torch.optim.AdamW(model_without_ddp.parameters(), args.lr, weight_decay=0.05, fused=True)
+    optimizer = torch.optim.AdamW(model_without_ddp.parameters(), args.lr, weight_decay=0.05, fused=True)
     criterion = torch.nn.CrossEntropyLoss()
     loss_scaler = NativeScaler()
 
@@ -137,7 +135,6 @@ def main(args):
     for epoch in range(args.start_epoch, args.epochs):
 
         for it, (samples, targets) in enumerate(train_loader):
-            print('iter:', it)
             samples = samples.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True)
 
