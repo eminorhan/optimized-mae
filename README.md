@@ -7,7 +7,7 @@ A lean, optimized implementation of masked autoencoders (MAEs). The skeleton of 
 - [x] `fused` AdamW
 - [ ] `FSDP` for distributed training
 
-Dependence of model definitions on the `timm` library is also removed in this implementation, so the code is self-contained except for the standard libraries.
+Dependence of model definitions on the `timm` library is also removed in this implementation, so the code is self-contained except for the standard libraries. The code was tested with `pytorch==2.2.0` and `torchvision==0.17.0`.
 
 **Notes:**
 

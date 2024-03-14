@@ -54,7 +54,7 @@ def get_args_parser():
     # training parameters
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N', help='start epoch')
     parser.add_argument('--eval', action='store_true', help='Perform evaluation only')
-    parser.add_argument('--num_workers', default=8, type=int)
+    parser.add_argument('--num_workers', default=16, type=int)
     parser.add_argument("--save_prefix", default="", type=str, help="""prefix for saving checkpoint and log files""")
 
     # distributed training parameters
@@ -159,7 +159,7 @@ def main(args):
         print(f"Top-1 accuracy of the network on the test images: {test_stats['acc1']:.1f}%")
         print(f"Top-5 accuracy of the network on the test images: {test_stats['acc5']:.1f}%")
 
-        if args.output_dir and test_stats["acc1"] > max_accuracy_1:
+        if args.output_dir and test_stats["acc5"] > max_accuracy_5:
             print('Improvement in max test accuracy. Saving model!')
             misc.save_model(args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler, epoch=epoch)
 
