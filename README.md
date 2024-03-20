@@ -5,6 +5,7 @@ A lean, optimized implementation of masked autoencoders (MAEs). The skeleton of 
 - [x] FlashAttention-2
 - [x] `torch.compile`
 - [x] `fused` AdamW
+- [x] mixed precision training (`torch.cuda.amp`)
 - [ ] `FSDP` for distributed training
 
 Dependence of model definitions on the `timm` library is also removed in this implementation, so the code is self-contained except for the standard libraries. The code was tested with `pytorch==2.2.0` and `torchvision==0.17.0`.
