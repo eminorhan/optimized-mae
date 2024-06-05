@@ -31,34 +31,36 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 def get_args_parser():
     parser = argparse.ArgumentParser('MAE fine-tuning', add_help=False)
-    parser.add_argument('--batch_size_per_gpu', default=512, type=int, help='batch size per gpu')
+    parser.add_argument('--batch_size_per_gpu', default=512, type=int, help='Batch size per gpu')
     parser.add_argument('--epochs', default=100, type=int)
     parser.add_argument('--accum_iter', default=1, type=int, help='Accumulate gradient iterations (for increasing the effective batch size under memory constraints)')
 
     # Model parameters
     parser.add_argument('--model', default='', type=str, help='Name of model')
-    parser.add_argument('--resume', default='', help='resume from checkpoint')
-    parser.add_argument('--compile', action='store_true', help='whether to compile the model for improved efficiency (default: false)')
+    parser.add_argument('--resume', default='', help='Resume from checkpoint')
+    parser.add_argument('--compile', action='store_true', help='Whether to compile the model for improved efficiency (default: false)')
 
     # Optimizer parameters
-    parser.add_argument('--lr', type=float, default=0.0005, metavar='LR', help='learning rate (absolute lr)')
+    parser.add_argument('--lr', type=float, default=0.001, help='Learning rate (absolute lr)')
+    parser.add_argument('--min_lr', type=float, default=0.00001, help='Lower lr bound for cyclic schedulers that hit 0')
+    parser.add_argument('--warmup_epochs', type=int, default=0, help='Epochs to warm up learning rate')
 
     # Dataset parameters
-    parser.add_argument('--input_size', default=224, type=int, help='images input size')
-    parser.add_argument('--num_labels', default=1000, type=int, help='number of classes')
-    parser.add_argument('--output_dir', default='./output_dir', help='path where to save, empty for no saving')
-    parser.add_argument('--device', default='cuda', help='device to use for training / testing')
+    parser.add_argument('--input_size', default=224, type=int, help='Images input size')
+    parser.add_argument('--num_labels', default=1000, type=int, help='Number of classes')
+    parser.add_argument('--output_dir', default='./output_dir', help='Path where to save, empty for no saving')
+    parser.add_argument('--device', default='cuda', help='Device to use for training / testing')
     parser.add_argument('--train_data_path', default='', type=str)
     parser.add_argument('--val_data_path', default='', type=str)
 
     # training parameters
-    parser.add_argument('--start_epoch', default=0, type=int, metavar='N', help='start epoch')
+    parser.add_argument('--start_epoch', default=0, type=int, help='Start epoch')
     parser.add_argument('--eval', action='store_true', help='Perform evaluation only')
     parser.add_argument('--num_workers', default=16, type=int)
-    parser.add_argument("--save_prefix", default="", type=str, help="""prefix for saving checkpoint and log files""")
+    parser.add_argument('--save_prefix', default='', type=str, help='Prefix for saving checkpoint and log files')
 
     # distributed training parameters
-    parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
+    parser.add_argument('--dist_url', default='env://', help='URL to set up distributed training')
 
     return parser
 
@@ -89,7 +91,7 @@ def main(args):
     # train and val datasets and loaders
     val_dataset = ImageFolder(args.val_data_path, transform=val_transform)
     val_sampler = SequentialSampler(val_dataset)
-    val_loader = DataLoader(val_dataset, sampler=val_sampler, batch_size=16*args.batch_size_per_gpu, num_workers=args.num_workers, pin_memory=True, drop_last=False)  # note we use a larger batch size for val
+    val_loader = DataLoader(val_dataset, sampler=val_sampler, batch_size=args.batch_size_per_gpu, num_workers=args.num_workers, pin_memory=True, drop_last=False)
 
     train_dataset = ImageFolder(args.train_data_path, transform=train_transform)
     train_sampler = DistributedSampler(train_dataset, num_replicas=misc.get_world_size(), rank=misc.get_rank(), shuffle=True)
@@ -135,6 +137,11 @@ def main(args):
     for epoch in range(args.start_epoch, args.epochs):
 
         for it, (samples, targets) in enumerate(train_loader):
+
+            # we use a per iteration (instead of per epoch) lr scheduler
+            if it % args.accum_iter == 0:
+                misc.adjust_learning_rate(optimizer, it / len(train_loader) + epoch, args)
+
             samples = samples.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True)
 
@@ -178,7 +185,6 @@ def main(args):
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
-
 
 @torch.no_grad()
 def evaluate(data_loader, model, device):

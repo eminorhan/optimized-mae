@@ -33,22 +33,23 @@ from util.misc import NativeScalerWithGradNormCount as NativeScaler
 def get_args_parser():
     parser = argparse.ArgumentParser('MAE pre-training', add_help=False)
     parser.add_argument('--batch_size_per_gpu', default=256, type=int, help='Batch size per GPU (effective batch size is batch_size_per_gpu * accum_iter * # gpus')
-    parser.add_argument('--epochs', default=999999, type=int)
+    parser.add_argument('--epochs', default=1000, type=int)
     parser.add_argument('--accum_iter', default=1, type=int, help='Accumulate gradient iterations (for increasing the effective batch size under memory constraints)')
-    parser.add_argument("--save_prefix", default="", type=str, help="""prefix for saving checkpoint and log files""")
+    parser.add_argument('--save_prefix', default='', type=str, help='Prefix for saving checkpoint and log files')
 
     # Model parameters
     parser.add_argument('--model', default='mae_vit_huge_patch14', type=str, help='Name of model to train')
-    parser.add_argument('--resume', default='', help='resume from a checkpoint')
-    parser.add_argument('--input_size', default=224, type=int, help='images input size')
+    parser.add_argument('--resume', default='', help='Resume from a checkpoint')
+    parser.add_argument('--input_size', default=224, type=int, help='Images input size')
     parser.add_argument('--mask_ratio', default=0.8, type=float, help='Masking ratio (percentage of removed patches).')
     parser.add_argument('--norm_pix_loss', action='store_true', help='Use (per-patch) normalized pixels as targets for computing loss (default: false)')
-    parser.add_argument('--compile', action='store_true', help='whether to compile the model for improved efficiency (default: false)')
+    parser.add_argument('--compile', action='store_true', help='Whether to compile the model for improved efficiency (default: false)')
 
     # Optimizer parameters
-    parser.add_argument('--weight_decay', type=float, default=0.05, help='weight decay (default: 0.05)')
-    parser.add_argument('--lr', type=float, default=0.0001, help='learning rate (absolute lr)')
-    parser.add_argument('--min_lr', type=float, default=0.0001, help='lower lr bound for cyclic schedulers that hit 0')
+    parser.add_argument('--weight_decay', type=float, default=0.05, help='Weight decay (default: 0.05)')
+    parser.add_argument('--lr', type=float, default=0.001, help='Learning rate (absolute lr)')
+    parser.add_argument('--min_lr', type=float, default=0.00001, help='Lower lr bound for cyclic schedulers that hit 0')
+    parser.add_argument('--warmup_epochs', type=int, default=0, help='Epochs to warm up learning rate')
 
     # Dataset parameters
     parser.add_argument('--data_path', default='', type=str, help='dataset path')
@@ -56,8 +57,8 @@ def get_args_parser():
     parser.add_argument('--device', default='cuda', help='device to use for training/testing')
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
     parser.add_argument('--num_workers', default=16, type=int)
-    parser.add_argument("--jitter_scale", default=[0.2, 1.0], type=float, nargs="+")
-    parser.add_argument("--jitter_ratio", default=[3.0/4.0, 4.0/3.0], type=float, nargs="+")
+    parser.add_argument('--jitter_scale', default=[0.2, 1.0], type=float, nargs='+')
+    parser.add_argument('--jitter_ratio', default=[3.0/4.0, 4.0/3.0], type=float, nargs='+')
 
     # distributed training parameters
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
@@ -103,7 +104,7 @@ def main(args):
 
     # set wd as 0 for bias and norm layers
     param_groups = misc.add_weight_decay(model_without_ddp, args.weight_decay, bias_wd=False)
-    optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95), fused=True)  # setting fused True for faster updates (hopefully)
+    optimizer = torch.optim._multi_tensor.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95), fused=True)  # setting fused True for faster updates (hopefully)
     loss_scaler = NativeScaler()
 
     misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler, optim_resume=True)
@@ -119,6 +120,10 @@ def main(args):
         header = 'Epoch: [{}]'.format(epoch)
 
         for it, (samples, _) in enumerate(metric_logger.log_every(data_loader, len(data_loader) // 1, header)):
+
+            # we use a per iteration (instead of per epoch) lr scheduler
+            if it % args.accum_iter == 0:
+                misc.adjust_learning_rate(optimizer, it / len(data_loader) + epoch, args)
 
             samples = samples.to(device, non_blocking=True)
 
@@ -139,6 +144,8 @@ def main(args):
             torch.cuda.synchronize()
 
             metric_logger.update(loss=loss_value)
+            lr = optimizer.param_groups[0]["lr"]
+            metric_logger.update(lr=lr)
 
         # ============ writing logs + saving checkpoint ============
         save_dict = {
