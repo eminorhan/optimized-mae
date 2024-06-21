@@ -116,6 +116,7 @@ def main(args):
 
     # set optimizer + loss
     optimizer = torch.optim.AdamW(model_without_ddp.parameters(), args.lr, weight_decay=0.05, fused=True)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=0.1)  # can use any other scheduler here
     criterion = torch.nn.CrossEntropyLoss()
     loss_scaler = NativeScaler()
 
@@ -126,7 +127,6 @@ def main(args):
         print(f"Accuracy of the network on the test images: {test_stats['acc1']:.1f}%")
         exit(0)
 
-    model.train(True)
     optimizer.zero_grad()
 
     print(f"Start training for {args.epochs} epochs")
@@ -136,11 +136,10 @@ def main(args):
     # TODO: loss tracking
     for epoch in range(args.start_epoch, args.epochs):
 
-        for it, (samples, targets) in enumerate(train_loader):
+        # turn on train mode
+        model.train()
 
-            # we use a per iteration (instead of per epoch) lr scheduler
-            if it % args.accum_iter == 0:
-                misc.adjust_learning_rate(optimizer, it / len(train_loader) + epoch, args)
+        for it, (samples, targets) in enumerate(train_loader):
 
             samples = samples.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True)
@@ -181,6 +180,9 @@ def main(args):
         if args.output_dir and misc.is_main_process():
             with open(os.path.join(args.output_dir, args.save_prefix + "_{}_log.txt".format(args.frac_retained)), mode="a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
+
+        # increment lr scheduler
+        scheduler.step()
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

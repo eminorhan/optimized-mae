@@ -105,6 +105,7 @@ def main(args):
     # set wd as 0 for bias and norm layers
     param_groups = misc.add_weight_decay(model_without_ddp, args.weight_decay, bias_wd=False)
     optimizer = torch.optim._multi_tensor.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95), fused=True)  # setting fused True for faster updates (hopefully)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=900, gamma=0.1)  # can use any other scheduler here
     loss_scaler = NativeScaler()
 
     misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler, optim_resume=True)
@@ -120,10 +121,6 @@ def main(args):
         header = 'Epoch: [{}]'.format(epoch)
 
         for it, (samples, _) in enumerate(metric_logger.log_every(data_loader, len(data_loader) // 1, header)):
-
-            # we use a per iteration (instead of per epoch) lr scheduler
-            if it % args.accum_iter == 0:
-                misc.adjust_learning_rate(optimizer, it / len(data_loader) + epoch, args)
 
             samples = samples.to(device, non_blocking=True)
 
@@ -169,6 +166,9 @@ def main(args):
 
         # start a fresh logger to wipe off old stats
         metric_logger = misc.MetricLogger(delimiter="  ")
+
+        # increment lr scheduler
+        scheduler.step()
 
 if __name__ == '__main__':
     args = get_args_parser()
