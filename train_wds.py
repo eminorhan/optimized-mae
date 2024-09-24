@@ -20,10 +20,8 @@ print(torch.__version__)
 
 import torch.backends.cudnn as cudnn
 import torchvision.transforms as transforms
-from torchvision.datasets import ImageFolder
-from torch.utils.data import DataLoader, DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
-
+import webdataset as wds
 import models_mae
 
 import util.misc as misc
@@ -31,11 +29,11 @@ from util.misc import NativeScalerWithGradNormCount as NativeScaler
 
 
 def get_args_parser():
-    parser = argparse.ArgumentParser('MAE pre-training', add_help=False)
+    parser = argparse.ArgumentParser('MAE pre-training with wds data loader', add_help=False)
     parser.add_argument('--batch_size_per_gpu', default=256, type=int, help='Batch size per GPU (effective batch size is batch_size_per_gpu * accum_iter * # gpus')
-    parser.add_argument('--epochs', default=1000, type=int)
     parser.add_argument('--accum_iter', default=1, type=int, help='Accumulate gradient iterations (for increasing the effective batch size under memory constraints)')
     parser.add_argument('--save_prefix', default='', type=str, help='Prefix for saving checkpoint and log files')
+    parser.add_argument('--save_freq', default=15000, type=int, help='Save checkpoint every this many iterations.')
 
     # Model parameters
     parser.add_argument('--model', default='mae_vit_huge_patch14', type=str, help='Name of model to train')
@@ -47,7 +45,7 @@ def get_args_parser():
 
     # Optimizer parameters
     parser.add_argument('--weight_decay', type=float, default=0.05, help='Weight decay (default: 0.05)')
-    parser.add_argument('--lr', type=float, default=0.001, help='Learning rate (absolute lr)')
+    parser.add_argument('--lr', type=float, default=0.0001, help='Learning rate (absolute lr)')
 
     # Dataset parameters
     parser.add_argument('--data_path', default='', type=str, help='dataset path')
@@ -79,11 +77,10 @@ def main(args):
         transforms.ToTensor(), 
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
-    
-    dataset = ImageFolder(args.data_path, transform=transform)
-    sampler = DistributedSampler(dataset, num_replicas=misc.get_world_size(), rank=misc.get_rank(), shuffle=True)
-    data_loader = DataLoader(dataset, sampler=sampler, batch_size=args.batch_size_per_gpu, num_workers=args.num_workers, pin_memory=True, drop_last=True)
-    print('Number of iters per epoch:', len(data_loader))
+
+    # use webdataset for loading data
+    dataset = wds.WebDataset(args.data_path, resampled=True).shuffle(10000, initial=10000).decode("pil").to_tuple("jpg", "cls").map_tuple(transform, lambda x: x)
+    dataloader = wds.WebLoader(dataset, shuffle=False, batch_size=args.batch_size_per_gpu, num_workers=args.num_workers)
 
     # define the model
     model = models_mae.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
@@ -102,8 +99,8 @@ def main(args):
 
     # set wd as 0 for bias and norm layers
     param_groups = misc.add_weight_decay(model_without_ddp, args.weight_decay, bias_wd=False)
-    optimizer = torch.optim._multi_tensor.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95), fused=True)  # setting fused True for faster updates (hopefully)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=900, gamma=0.1)  # can use any other scheduler here
+    optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95), fused=True)  # setting fused True for slightly faster updates
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500000, gamma=0.1)  # can use any other scheduler here
     loss_scaler = NativeScaler()
 
     misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler, optim_resume=True)
@@ -113,60 +110,59 @@ def main(args):
     optimizer.zero_grad()
 
     print("Starting MAE training!")
-    for epoch in range(args.start_epoch, args.epochs):
+    for it, (samples, _) in enumerate(dataloader):
 
-        data_loader.sampler.set_epoch(epoch)
-        header = 'Epoch: [{}]'.format(epoch)
+        samples = samples.to(device, non_blocking=True)
 
-        for it, (samples, _) in enumerate(metric_logger.log_every(data_loader, len(data_loader) // 1, header)):
+        with torch.cuda.amp.autocast():
+            loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
 
-            samples = samples.to(device, non_blocking=True)
+        loss_value = loss.item()
 
-            with torch.cuda.amp.autocast():
-                loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
+        if not math.isfinite(loss_value):
+            print(f"Loss is {loss_value}, stopping training")
+            sys.exit(1)
 
-            loss_value = loss.item()
+        loss = loss / args.accum_iter
+        loss_scaler(loss, optimizer, parameters=model.parameters(), update_grad=(it + 1) % args.accum_iter == 0)
+        if (it + 1) % args.accum_iter == 0:
+            optimizer.zero_grad()
 
-            if not math.isfinite(loss_value):
-                print("Loss is {}, stopping training".format(loss_value))
-                sys.exit(1)
+        torch.cuda.synchronize()
 
-            loss = loss / args.accum_iter
-            loss_scaler(loss, optimizer, parameters=model.parameters(), update_grad=(it + 1) % args.accum_iter == 0)
-            if (it + 1) % args.accum_iter == 0:
-                optimizer.zero_grad()
-
-            torch.cuda.synchronize()
-
-            metric_logger.update(loss=loss_value)
-            lr = optimizer.param_groups[0]["lr"]
-            metric_logger.update(lr=lr)
-
-        # ============ writing logs + saving checkpoint ============
-        save_dict = {
-            'model': model_without_ddp.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'args': args,
-            'epoch': epoch,
-            'scaler': loss_scaler.state_dict(),
-        }
-
-        misc.save_on_master(save_dict, os.path.join(args.output_dir, args.save_prefix + '_checkpoint.pth'))
-
-        # gather the stats from all processes
-        metric_logger.synchronize_between_processes()
-        train_stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-        log_stats = {**{f'train_{k}': v for k, v in train_stats.items()}, 'epoch': epoch}
-
-        if misc.is_main_process():
-            with (Path(args.output_dir) / (args.save_prefix + "_log.txt")).open("a") as f:
-                f.write(json.dumps(log_stats) + "\n")
-
-        # start a fresh logger to wipe off old stats
-        metric_logger = misc.MetricLogger(delimiter="  ")
+        metric_logger.update(loss=loss_value)
+        metric_logger.update(lr=optimizer.param_groups[0]["lr"])
 
         # increment lr scheduler
-        scheduler.step()
+        if it != 0 and it % args.accum_iter == 0:
+            scheduler.step()
+
+        if it != 0 and it % args.save_freq == 0:
+            # ============ writing logs + saving checkpoint ============
+            print(f"Iteration {it}; saving checkpoint...")
+            save_dict = {
+                'model': model_without_ddp.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'args': args,
+                'epoch': it,
+                'scaler': loss_scaler.state_dict(),
+            }
+
+            # save model, optimizer, etc. on master
+            misc.save_on_master(save_dict, os.path.join(args.output_dir, args.save_prefix + '_checkpoint.pth'))
+
+            # gather the stats from all processes
+            metric_logger.synchronize_between_processes()
+            train_stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+            log_stats = {**{f'train_{k}': v for k, v in train_stats.items()}, 'iteration': it}
+
+            if misc.is_main_process():
+                with (Path(args.output_dir) / (args.save_prefix + "_log.txt")).open("a") as f:
+                    f.write(json.dumps(log_stats) + "\n")
+
+            # start a fresh logger to wipe off old stats
+            metric_logger = misc.MetricLogger(delimiter="  ")
+
 
 if __name__ == '__main__':
     args = get_args_parser()
