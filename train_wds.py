@@ -33,7 +33,7 @@ def get_args_parser():
     parser.add_argument('--batch_size_per_gpu', default=256, type=int, help='Batch size per GPU (effective batch size is batch_size_per_gpu * accum_iter * # gpus')
     parser.add_argument('--accum_iter', default=1, type=int, help='Accumulate gradient iterations (for increasing the effective batch size under memory constraints)')
     parser.add_argument('--save_prefix', default='', type=str, help='Prefix for saving checkpoint and log files')
-    parser.add_argument('--save_freq', default=15000, type=int, help='Save checkpoint every this many iterations.')
+    parser.add_argument('--save_freq', default=10000, type=int, help='Save checkpoint every this many iterations.')
 
     # Model parameters
     parser.add_argument('--model', default='mae_vit_huge_patch14', type=str, help='Name of model to train')
@@ -79,7 +79,7 @@ def main(args):
         ])
 
     # use webdataset for loading data
-    dataset = wds.WebDataset(args.data_path, resampled=True).shuffle(10000, initial=10000).decode("pil").to_tuple("jpg", "cls").map_tuple(transform, lambda x: x)
+    dataset = wds.WebDataset(args.data_path, resampled=True, shardshuffle=True).shuffle(10000, initial=10000).decode("pil").to_tuple("jpg", "cls").map_tuple(transform, lambda x: x)
     dataloader = wds.WebLoader(dataset, shuffle=False, batch_size=args.batch_size_per_gpu, num_workers=args.num_workers)
 
     # define the model
@@ -91,16 +91,14 @@ def main(args):
     # optionally compile model
     if args.compile:
         model = torch.compile(model)
-    print(f"Model: {model_without_ddp}")
 
     model = DDP(model, device_ids=[args.gpu])  # TODO: try FSDP
-    print(f"Model: {model_without_ddp}")
     print(f"Number of params (M): {(sum(p.numel() for p in model_without_ddp.parameters() if p.requires_grad) / 1.e6)}")
 
     # set wd as 0 for bias and norm layers
     param_groups = misc.add_weight_decay(model_without_ddp, args.weight_decay, bias_wd=False)
     optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95), fused=True)  # setting fused True for slightly faster updates
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500000, gamma=0.1)  # can use any other scheduler here
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=300000, gamma=0.1)  # TODO: hardcoding step_size is ugly here, find a better way to set up lr scheduler
     loss_scaler = NativeScaler()
 
     misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler, optim_resume=True)

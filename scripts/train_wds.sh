@@ -6,8 +6,8 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=240GB
 #SBATCH --time=48:00:00
-#SBATCH --job-name=train_optimized_mae
-#SBATCH --output=train_optimized_mae_%A_%a.out
+#SBATCH --job-name=train_optimized_mae_wds
+#SBATCH --output=train_optimized_mae_wds_%A_%a.out
 #SBATCH --array=0
 
 export MASTER_ADDR=$(hostname -s)
@@ -27,6 +27,7 @@ srun python -u ../train_wds.py \
 	--output_dir /scratch/eo41/optimized-mae/outputs/sfp \
 	--data_path "/scratch/eo41/data/saycam/Sfp_5fps_300s_{000000..000003}.tar" \
 	--save_prefix sfp_vith14 \
+	--save_freq 10000 \
 	--compile
 
 echo "Done"
